@@ -32,7 +32,8 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
+      {/* Above the GoodDoc drawer (z-index ~2147483000), so notifications from the panel stay visible. */}
+      <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-4 z-[2147483600] flex justify-center px-4">
         {toast && (
           <div
             key={toast.id}

@@ -2,7 +2,7 @@
 //
 // The two share field names, but the panel structures some lists:
 //   allergies      { allergen, reaction }                              → "Penicillin (rash)"
-//   treatmentPlan  { tooth, procedure, priority }                      → "#46 Filling (high priority)"
+//   treatmentPlan  { tooth, procedure, priority }                      → "#46 Filling (priority: high)"
 //   prescriptions  { name, dosage, frequency, duration, instructions } → "Amoxicillin 500 mg, TID, 5 days. With food"
 
 import type { ClinicalNote } from '../types'
@@ -31,7 +31,7 @@ const planStep = (o: Row) => {
   const tooth = text(o.tooth)
   const priority = text(o.priority)
   const step = [tooth && `#${tooth.replace(/^#/, '')}`, text(o.procedure)].filter(Boolean).join(' ')
-  return priority && step ? `${step} (${priority.toLowerCase()} priority)` : step
+  return priority && step ? `${step} (priority: ${priority.toLowerCase()})` : step
 }
 
 const prescription = (o: Row) => {

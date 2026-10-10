@@ -5,27 +5,31 @@ import type { ClinicalNote, ClinicalRecord, ProcedureEntry, ToothFinding } from 
 import { capitalize, formatDate, formatTime, shortSession } from '../lib/format'
 import { emptyNote } from '../data/seed'
 import { useDemoStore } from '../store/DemoStore'
+import { useGoodDoc, useGoodDocPatient } from '../gooddoc/GoodDoc'
 import AppointmentFormModal from '../components/AppointmentFormModal'
 import Odontogram from '../components/clinical/Odontogram'
 import { ListEditor, ProcedureEditor, TextField, ToothFindingsEditor } from '../components/clinical/editors'
-import { AlertIcon, CalendarIcon, ChevronLeftIcon, ClockIcon, InfoIcon, PencilIcon, PlusIcon, RefreshIcon } from '../components/icons'
+import { AlertIcon, CalendarIcon, ChevronLeftIcon, ClockIcon, InfoIcon, MicIcon, PencilIcon, PlusIcon, RefreshIcon } from '../components/icons'
 import { ConfirmDialog, LoadPanel, Missing, StatusBadge, TextOrMissing, btn, isPlaceholder } from '../components/ui'
 
 const filled = (v: string) => !isPlaceholder(v)
 
-// Each section lists the fields it covers, so the sidebar can show how complete it is.
-const SECTIONS = [
-  { id: 'complaint', title: 'Chief complaint and history', fields: (n: ClinicalNote) => [filled(n.chiefComplaint), filled(n.historyOfPresentIllness)] },
-  { id: 'medical', title: 'Medical background', fields: (n: ClinicalNote) => [filled(n.medicalHistory), filled(n.medications), n.allergies.length > 0] },
-  { id: 'exam', title: 'Dental examination', fields: (n: ClinicalNote) => [n.toothFindings.length > 0, filled(n.periodontal), filled(n.softTissue)] },
-  { id: 'radiographs', title: 'Radiographs and assessment', fields: (n: ClinicalNote) => [filled(n.radiographs), filled(n.assessment)] },
-  { id: 'plan', title: 'Treatment plan', fields: (n: ClinicalNote) => [n.treatmentPlan.length > 0] },
-  { id: 'procedures', title: 'Procedures performed', fields: (n: ClinicalNote) => [n.proceduresPerformed.length > 0] },
-  { id: 'prescriptions', title: 'Prescriptions', fields: (n: ClinicalNote) => [n.prescriptions.length > 0] },
-  { id: 'aftercare', title: 'Aftercare and follow-up', fields: (n: ClinicalNote) => [filled(n.postOpInstructions), filled(n.followUp), n.redFlags.length > 0] },
-] as const
+type NoteKey = keyof ClinicalNote
 
-type SectionId = (typeof SECTIONS)[number]['id']
+// Each section owns some note fields (`keys`, saved together; the exam's odontogram can also chart
+// procedures) and reports which are filled in, so the sidebar can show how complete it is.
+const SECTIONS: readonly { id: SectionId; title: string; keys: readonly NoteKey[]; fields: (n: ClinicalNote) => boolean[] }[] = [
+  { id: 'complaint', title: 'Chief complaint and history', keys: ['chiefComplaint', 'historyOfPresentIllness'], fields: (n) => [filled(n.chiefComplaint), filled(n.historyOfPresentIllness)] },
+  { id: 'medical', title: 'Medical background', keys: ['medicalHistory', 'medications', 'allergies'], fields: (n) => [filled(n.medicalHistory), filled(n.medications), n.allergies.length > 0] },
+  { id: 'exam', title: 'Dental examination', keys: ['toothFindings', 'periodontal', 'softTissue', 'proceduresPerformed'], fields: (n) => [n.toothFindings.length > 0, filled(n.periodontal), filled(n.softTissue)] },
+  { id: 'radiographs', title: 'Radiographs and assessment', keys: ['radiographs', 'assessment'], fields: (n) => [filled(n.radiographs), filled(n.assessment)] },
+  { id: 'plan', title: 'Treatment plan', keys: ['treatmentPlan'], fields: (n) => [n.treatmentPlan.length > 0] },
+  { id: 'procedures', title: 'Procedures performed', keys: ['proceduresPerformed'], fields: (n) => [n.proceduresPerformed.length > 0] },
+  { id: 'prescriptions', title: 'Prescriptions', keys: ['prescriptions'], fields: (n) => [n.prescriptions.length > 0] },
+  { id: 'aftercare', title: 'Aftercare and follow-up', keys: ['postOpInstructions', 'followUp', 'redFlags'], fields: (n) => [filled(n.postOpInstructions), filled(n.followUp), n.redFlags.length > 0] },
+]
+
+type SectionId = 'complaint' | 'medical' | 'exam' | 'radiographs' | 'plan' | 'procedures' | 'prescriptions' | 'aftercare'
 
 /** Drop blank list entries and blank optional fields before saving — blank ≠ recorded. */
 function cleanNote(note: ClinicalNote): ClinicalNote {
@@ -52,7 +56,14 @@ function cleanNote(note: ClinicalNote): ClinicalNote {
   }
 }
 
-const sameNote = (a: ClinicalNote, b: ClinicalNote) => JSON.stringify(cleanNote(a)) === JSON.stringify(cleanNote(b))
+/** The fields a section owns, cleaned. A section save writes only these onto the latest saved note,
+ *  so it never overwrites changes made elsewhere in the meantime (e.g. a GoodDoc ambient note). */
+const sectionPart = (id: SectionId, note: ClinicalNote): Partial<ClinicalNote> => {
+  const clean = cleanNote(note)
+  return Object.fromEntries(SECTIONS.find((s) => s.id === id)!.keys.map((k) => [k, clean[k]]))
+}
+
+const sameSection = (id: SectionId, a: ClinicalNote, b: ClinicalNote) => JSON.stringify(sectionPart(id, a)) === JSON.stringify(sectionPart(id, b))
 
 const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
@@ -64,6 +75,8 @@ export default function AppointmentDetailsPage() {
   const appointment = appointments.find((a) => a.sessionId === sessionId)
   const recordState = records[sessionId]
   const ready = appointmentsState.status === 'ready' && recordState?.status === 'ready'
+  const goodDoc = useGoodDoc()
+  useGoodDocPatient(appointment)
 
   // One section is edited at a time; the draft is a full copy of the note because the API saves the whole note.
   const [editingId, setEditingId] = useState<SectionId | null>(null)
@@ -79,7 +92,7 @@ export default function AppointmentDetailsPage() {
 
   const stored = recordState?.status === 'ready' ? recordState.record : null
   const savedNote = stored?.note ?? null
-  const dirty = draft !== null && !sameNote(draft, savedNote ?? emptyNote())
+  const dirty = draft !== null && editingId !== null && !sameSection(editingId, draft, savedNote ?? emptyNote())
 
   useEffect(() => {
     if (!dirty) return
@@ -160,7 +173,7 @@ export default function AppointmentDetailsPage() {
     if (!draft || !editingId || saving) return
     if (!dirty) return close()
     setSaving(true)
-    const ok = await saveRecord(appointment, { ...record, note: cleanNote(draft) })
+    const ok = await saveRecord(appointment, { ...record, note: { ...saved, ...sectionPart(editingId, draft) } })
     setSaving(false)
     // On failure keep the section open so no edits are lost; the store shows the error.
     if (ok) {
@@ -289,6 +302,22 @@ export default function AppointmentDetailsPage() {
                 {saved.chiefComplaint}
               </p>
             )}
+            {goodDoc.enabled && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className={btn.secondary}
+                  onClick={goodDoc.show}
+                  disabled={!goodDoc.ready}
+                  title={goodDoc.ready ? 'Open the GoodDoc Control Panel (Ctrl+G)' : 'GoodDoc is connecting…'}
+                >
+                  <MicIcon /> Ambient scribe
+                </button>
+                <span className="text-xs text-slate-600">
+                  {goodDoc.ready ? 'Reviewed GoodDoc notes are saved to this chart automatically.' : 'Connecting to GoodDoc…'}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl bg-slate-50 p-4 text-sm lg:min-w-72">
@@ -322,9 +351,16 @@ export default function AppointmentDetailsPage() {
               <p className="mt-0.5 text-sm text-sky-800">Start with the chief complaint. Each section is saved on its own, so you can fill it in as the visit goes.</p>
             </div>
           </div>
-          <button type="button" className={`${btn.primary} shrink-0`} onClick={() => requestEdit({ id: 'complaint' })}>
-            <PlusIcon /> Start clinical note
-          </button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {goodDoc.ready && (
+              <button type="button" className={btn.secondary} onClick={goodDoc.show}>
+                <MicIcon /> Record with GoodDoc
+              </button>
+            )}
+            <button type="button" className={btn.primary} onClick={() => requestEdit({ id: 'complaint' })}>
+              <PlusIcon /> Start clinical note
+            </button>
+          </div>
         </div>
       ) : (
         !isEmptyRecord && <Summary note={saved} />

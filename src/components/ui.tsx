@@ -14,7 +14,7 @@ export const btn = {
   primary:
     'inline-flex items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-800 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60',
   secondary:
-    'inline-flex items-center justify-center gap-2 rounded-lg border border-slate-500 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-teal-700',
+    'inline-flex items-center justify-center gap-2 rounded-lg border border-slate-500 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60',
   ghost:
     'inline-flex items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-3 focus-visible:outline-offset-1 focus-visible:outline-teal-700',
   danger:
