@@ -1,6 +1,0 @@
-appointmentId,sessionId,patientId,date,time,type,dentist,status
-APT-1001,060b4b18-a3a6-4fb4-b7d8-8b5e1d2feb99,DEN-88210,2026-10-09,10:30,Dental consultation,,Scheduled
-APT-1002,3f1c2a9e-7b44-4d0e-9a51-2c8e6f0d1a01,DEN-88214,2026-10-09,09:00,Scaling and polishing,,Completed
-APT-1003,8a2d4b6c-1e3f-4a5b-8c7d-9e0f1a2b3c02,DEN-88215,2026-10-09,11:45,Routine check-up,,Checked In
-APT-1004,b7e9c1d3-5f2a-4b8c-9d0e-1f2a3b4c5d03,DEN-88219,2026-10-10,14:15,Root canal follow-up,,Scheduled
-APT-1005,c4d5e6f7-8a9b-4c0d-a1e2-f3a4b5c6d704,DEN-88222,2026-10-08,16:00,Extraction consultation,,Cancelled

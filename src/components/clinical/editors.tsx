@@ -1,8 +1,21 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import type { TextareaHTMLAttributes } from 'react'
 import type { ProcedureEntry, ToothFinding } from '../../types'
 import { capitalize } from '../../lib/format'
 import { PlusIcon, TrashIcon } from '../icons'
 import { ConfirmDialog, Field, btn, inputCls } from '../ui'
+
+/** Textarea that grows with its content, so long clinical text is never hidden behind a scrollbar. */
+export function AutoTextarea({ className = '', value, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + 2}px`
+  }, [value])
+  return <textarea ref={ref} rows={1} value={value} className={`${inputCls} resize-none overflow-hidden leading-relaxed ${className}`} {...props} />
+}
 
 export function TextField({
   label,
@@ -10,59 +23,91 @@ export function TextField({
   onChange,
   multiline,
   placeholder = 'Not recorded',
+  autoFocus,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   multiline?: boolean
   placeholder?: string
+  autoFocus?: boolean
 }) {
   const id = useId()
   return (
     <Field label={label} htmlFor={id}>
       {multiline ? (
-        <textarea id={id} rows={3} className={inputCls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+        <AutoTextarea id={id} rows={2} value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)} />
       ) : (
-        <input id={id} className={inputCls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+        <input id={id} className={inputCls} value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)} />
       )}
     </Field>
   )
 }
 
-/** Editable list of free-text entries (allergies, treatment plan, prescriptions, red flags). */
+/**
+ * Editable list of free-text entries (allergies, treatment plan, prescriptions, red flags).
+ * Enter adds the next entry; Backspace on an empty entry removes it.
+ */
 export function ListEditor({
   label,
   items,
   onChange,
   itemLabel,
   placeholder,
+  numbered,
 }: {
   label: string
   items: string[]
   onChange: (items: string[]) => void
   itemLabel: string
   placeholder?: string
+  numbered?: boolean
 }) {
   const id = useId()
+  const [focusIndex, setFocusIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (focusIndex === null) return
+    const el = document.getElementById(`${id}-${focusIndex}`) as HTMLTextAreaElement | null
+    el?.focus()
+    el?.setSelectionRange(el.value.length, el.value.length)
+    setFocusIndex(null)
+  }, [focusIndex, id])
+
+  const insertAfter = (i: number) => {
+    onChange([...items.slice(0, i + 1), '', ...items.slice(i + 1)])
+    setFocusIndex(i + 1)
+  }
+
   return (
     <fieldset className="space-y-2">
       <legend className="mb-1.5 text-sm font-medium text-slate-700">{label}</legend>
       {items.length === 0 && <p className="text-sm italic text-slate-600">None recorded</p>}
       {items.map((item, i) => (
-        <div key={i} className="flex gap-2">
+        <div key={i} className="flex items-start gap-2">
+          {numbered && <span className="w-5 shrink-0 pt-2 text-right font-mono text-xs text-slate-500">{i + 1}.</span>}
           <label htmlFor={`${id}-${i}`} className="sr-only">
             {itemLabel} {i + 1}
           </label>
-          <input
+          <AutoTextarea
             id={`${id}-${i}`}
-            className={inputCls}
             value={item}
-            placeholder={placeholder}
+            placeholder={placeholder ?? `${itemLabel}…`}
             onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                insertAfter(i)
+              } else if (e.key === 'Backspace' && item === '') {
+                e.preventDefault()
+                onChange(items.filter((_, j) => j !== i))
+                if (i > 0) setFocusIndex(i - 1)
+              }
+            }}
           />
           <button
             type="button"
-            className={`${btn.ghost} text-slate-600 hover:text-red-700`}
+            className={`${btn.ghost} mt-0.5 text-slate-600 hover:text-red-700`}
             onClick={() => onChange(items.filter((_, j) => j !== i))}
             aria-label={`Remove ${itemLabel.toLowerCase()} ${i + 1}`}
           >
@@ -70,9 +115,12 @@ export function ListEditor({
           </button>
         </div>
       ))}
-      <button type="button" className={`${btn.ghost} text-teal-700`} onClick={() => onChange([...items, ''])}>
-        <PlusIcon /> Add {itemLabel.toLowerCase()}
-      </button>
+      <div className="flex flex-wrap items-center gap-x-3">
+        <button type="button" className={`${btn.ghost} text-teal-700`} onClick={() => insertAfter(items.length - 1)}>
+          <PlusIcon /> Add {itemLabel.toLowerCase()}
+        </button>
+        {items.length > 0 && <span className="text-xs text-slate-500">Enter adds another · Backspace on an empty line removes it</span>}
+      </div>
     </fieldset>
   )
 }
@@ -93,7 +141,7 @@ export function ToothFindingsEditor({
       <legend className="mb-1.5 text-sm font-medium text-slate-700">Tooth findings</legend>
       {findings.length === 0 && <p className="text-sm italic text-slate-600">None recorded</p>}
       {findings.map((f, i) => (
-        <div key={i} className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-[7rem_8rem_1fr_auto] sm:items-end">
+        <div key={i} className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-[6rem_7rem_1fr_auto] sm:items-start">
           <Field label="Tooth" htmlFor={`${id}-${i}-tooth`}>
             <input id={`${id}-${i}-tooth`} className={inputCls} value={f.tooth} placeholder="e.g. 46" onChange={(e) => update(i, { tooth: e.target.value })} />
           </Field>
@@ -101,11 +149,11 @@ export function ToothFindingsEditor({
             <input id={`${id}-${i}-surf`} className={inputCls} value={f.surfaces} placeholder="e.g. MO" onChange={(e) => update(i, { surfaces: e.target.value })} />
           </Field>
           <Field label="Finding" htmlFor={`${id}-${i}-finding`}>
-            <input id={`${id}-${i}-finding`} className={inputCls} value={f.finding} onChange={(e) => update(i, { finding: e.target.value })} />
+            <AutoTextarea id={`${id}-${i}-finding`} value={f.finding} placeholder="Describe the finding" onChange={(e) => update(i, { finding: e.target.value })} />
           </Field>
           <button
             type="button"
-            className={`${btn.ghost} text-slate-600 hover:text-red-700`}
+            className={`${btn.ghost} text-slate-600 hover:text-red-700 sm:mt-7`}
             onClick={() => onChange(findings.filter((_, j) => j !== i))}
             aria-label={`Remove tooth finding ${i + 1}`}
           >
@@ -212,7 +260,7 @@ function ProcedureCard({
         </div>
         <div className="sm:col-span-2">
           <Field label="Notes" htmlFor={`${id}-notes`}>
-            <textarea id={`${id}-notes`} rows={2} className={inputCls} value={entry.notes ?? ''} onChange={(e) => onChange({ ...entry, notes: e.target.value })} />
+            <AutoTextarea id={`${id}-notes`} rows={2} value={entry.notes ?? ''} onChange={(e) => onChange({ ...entry, notes: e.target.value })} />
           </Field>
         </div>
       </div>
@@ -269,7 +317,7 @@ export function ProcedureEditor({
           message={
             <>
               Procedure {pendingRemove + 1}
-              {target?.procedure ? ` (${capitalize(target.procedure)})` : ''} will be removed when you save the clinical record.
+              {target?.procedure ? ` (${capitalize(target.procedure)})` : ''} will be removed when you save this section.
             </>
           }
           confirmLabel="Remove"

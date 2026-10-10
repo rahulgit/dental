@@ -1,21 +1,29 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Appointment, ClinicalRecord } from '../types'
-import { APPOINTMENT_STATUSES } from '../types'
-import { normalizeRecord, seedAppointments, seedRecords } from '../data/seed'
-
-// Demo persistence only — browser storage is NOT secure storage for real patient data.
-const APPOINTMENTS_KEY = 'dentalcare-hms.appointments.v1'
-const RECORDS_KEY = 'dentalcare-hms.records.v1'
+import { patientName } from '../data/seed'
+import { fetchAppointments, fetchConsultation, saveConsultation } from '../lib/api'
 
 type Toast = { id: number; message: string; kind: 'success' | 'error' }
 
+export type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' }
+
+/** Consultation for a session: `record` is null when none has been recorded yet. */
+export type RecordState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; record: ClinicalRecord | null }
+
 type DemoStore = {
   appointments: Appointment[]
-  records: Record<string, ClinicalRecord>
+  appointmentsState: LoadState
+  reloadAppointments: () => void
   saveAppointment: (appointment: Appointment) => boolean
-  saveRecord: (record: ClinicalRecord) => boolean
-  resetDemo: () => void
+  records: Record<string, RecordState>
+  loadRecord: (appointment: Appointment, force?: boolean) => void
+  saveRecord: (appointment: Appointment, record: ClinicalRecord) => Promise<boolean>
+  /** Latest saved record, fetching it if this session hasn't loaded it yet. Throws if the fetch fails. */
+  getRecord: (appointment: Appointment) => Promise<ClinicalRecord | null>
   toast: Toast | null
   notify: (message: string, kind?: Toast['kind']) => void
   dismissToast: () => void
@@ -23,51 +31,15 @@ type DemoStore = {
 
 const StoreContext = createContext<DemoStore | null>(null)
 
-function readJSON(key: string): unknown {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-
-function writeJSON(key: string, value: unknown): boolean {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-    return true
-  } catch {
-    return false
-  }
-}
-
-function loadAppointments(): Appointment[] {
-  const stored = readJSON(APPOINTMENTS_KEY)
-  if (!Array.isArray(stored)) return seedAppointments()
-  return stored.filter(
-    (a): a is Appointment =>
-      a && typeof a.appointmentId === 'string' && typeof a.sessionId === 'string',
-  ).map((a) => ({
-    ...a,
-    dentist: a.dentist ?? '',
-    status: APPOINTMENT_STATUSES.includes(a.status) ? a.status : 'Scheduled',
-  }))
-}
-
-function loadRecords(): Record<string, ClinicalRecord> {
-  const stored = readJSON(RECORDS_KEY)
-  if (!stored || typeof stored !== 'object') return seedRecords()
-  const out: Record<string, ClinicalRecord> = {}
-  for (const value of Object.values(stored)) {
-    const record = normalizeRecord(value)
-    if (record) out[record.sessionId] = record
-  }
-  return out
-}
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : 'Unknown error')
 
 export function DemoStoreProvider({ children }: { children: ReactNode }) {
-  const [appointments, setAppointments] = useState(loadAppointments)
-  const [records, setRecords] = useState(loadRecords)
+  const [remote, setRemote] = useState<Appointment[]>([])
+  // Appointment create/edit has no API endpoint yet, so those changes are kept
+  // in memory for this session and layered over the API data.
+  const [local, setLocal] = useState<Record<string, Appointment>>({})
+  const [appointmentsState, setAppointmentsState] = useState<LoadState>({ status: 'loading' })
+  const [records, setRecords] = useState<Record<string, RecordState>>({})
   const [toast, setToast] = useState<Toast | null>(null)
   const timer = useRef<number | undefined>(undefined)
 
@@ -81,43 +53,92 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
-  const saveAppointment = useCallback(
-    (appointment: Appointment) => {
-      const exists = appointments.some((a) => a.appointmentId === appointment.appointmentId)
-      const next = exists
-        ? appointments.map((a) => (a.appointmentId === appointment.appointmentId ? appointment : a))
-        : [...appointments, appointment]
-      setAppointments(next)
-      const ok = writeJSON(APPOINTMENTS_KEY, next)
-      if (!ok) notify('Appointment updated for this session, but could not be saved to browser storage.', 'error')
-      return ok
-    },
-    [appointments, notify],
-  )
+  const reloadAppointments = useCallback(() => {
+    setAppointmentsState({ status: 'loading' })
+    fetchAppointments()
+      .then((list) => {
+        setRemote(list.map((a) => ({ ...a, patientName: patientName(a.patientId) })))
+        setAppointmentsState({ status: 'ready' })
+      })
+      .catch((e) => setAppointmentsState({ status: 'error', message: errorMessage(e) }))
+  }, [])
+
+  useEffect(reloadAppointments, [reloadAppointments])
+
+  const appointments = useMemo(() => {
+    const ids = new Set(remote.map((a) => a.appointmentId))
+    return [...remote.map((a) => local[a.appointmentId] ?? a), ...Object.values(local).filter((a) => !ids.has(a.appointmentId))]
+  }, [remote, local])
+
+  const saveAppointment = useCallback((appointment: Appointment) => {
+    setLocal((l) => ({ ...l, [appointment.appointmentId]: appointment }))
+    return true
+  }, [])
+
+  const toRecord = (appointment: Appointment, note: ClinicalRecord['note']): ClinicalRecord => ({
+    sessionId: appointment.sessionId,
+    patientId: appointment.patientId,
+    patientName: appointment.patientName,
+    note,
+  })
+
+  // Tracks which sessions have been requested, so callers can ask freely without refetching.
+  const requested = useRef(new Set<string>())
+
+  const loadRecord = useCallback((appointment: Appointment, force = false) => {
+    const key = appointment.sessionId
+    if (requested.current.has(key) && !force) return
+    requested.current.add(key)
+    setRecords((r) => ({ ...r, [key]: { status: 'loading' } }))
+    fetchConsultation(appointment.appointmentId)
+      .then((note) =>
+        setRecords((r) => ({ ...r, [key]: { status: 'ready', record: note ? toRecord(appointment, note) : null } })),
+      )
+      .catch((e) => setRecords((r) => ({ ...r, [key]: { status: 'error', message: errorMessage(e) } })))
+  }, [])
+
+  const recordsRef = useRef(records)
+  recordsRef.current = records
+
+  const getRecord = useCallback(async (appointment: Appointment) => {
+    const cached = recordsRef.current[appointment.sessionId]
+    if (cached?.status === 'ready') return cached.record
+    const note = await fetchConsultation(appointment.appointmentId)
+    const record = note ? toRecord(appointment, note) : null
+    requested.current.add(appointment.sessionId)
+    setRecords((r) => ({ ...r, [appointment.sessionId]: { status: 'ready', record } }))
+    return record
+  }, [])
 
   const saveRecord = useCallback(
-    (record: ClinicalRecord) => {
-      const next = { ...records, [record.sessionId]: record }
-      setRecords(next)
-      const ok = writeJSON(RECORDS_KEY, next)
-      if (!ok) notify('Clinical record updated for this session, but could not be saved to browser storage.', 'error')
-      return ok
+    async (appointment: Appointment, record: ClinicalRecord) => {
+      try {
+        await saveConsultation(appointment.appointmentId, record.note)
+        setRecords((r) => ({ ...r, [record.sessionId]: { status: 'ready', record } }))
+        return true
+      } catch (e) {
+        notify(`Could not save clinical record: ${errorMessage(e)}`, 'error')
+        return false
+      }
     },
-    [records, notify],
+    [notify],
   )
 
-  const resetDemo = useCallback(() => {
-    const a = seedAppointments()
-    const r = seedRecords()
-    setAppointments(a)
-    setRecords(r)
-    const ok = writeJSON(APPOINTMENTS_KEY, a) && writeJSON(RECORDS_KEY, r)
-    notify(ok ? 'Demo data reset' : 'Demo data reset, but browser storage is unavailable.', ok ? 'success' : 'error')
-  }, [notify])
-
   const value = useMemo(
-    () => ({ appointments, records, saveAppointment, saveRecord, resetDemo, toast, notify, dismissToast }),
-    [appointments, records, saveAppointment, saveRecord, resetDemo, toast, notify, dismissToast],
+    () => ({
+      appointments,
+      appointmentsState,
+      reloadAppointments,
+      saveAppointment,
+      records,
+      loadRecord,
+      saveRecord,
+      getRecord,
+      toast,
+      notify,
+      dismissToast,
+    }),
+    [appointments, appointmentsState, reloadAppointments, saveAppointment, records, loadRecord, saveRecord, getRecord, toast, notify, dismissToast],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

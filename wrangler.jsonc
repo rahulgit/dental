@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dentalcare-hms",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    // Refreshing /appointments/:id serves index.html; only /api/* runs the Worker.
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "API_BASE": "https://innov-dev.beta.injomo.com/workflow.trigger"
+  }
+}

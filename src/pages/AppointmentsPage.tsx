@@ -5,13 +5,13 @@ import { APPOINTMENT_STATUSES } from '../types'
 import { formatDate, formatTime, todayISO } from '../lib/format'
 import { useDemoStore } from '../store/DemoStore'
 import AppointmentFormModal from '../components/AppointmentFormModal'
-import { CalendarIcon, CheckIcon, ChevronRightIcon, ClockIcon, PencilIcon, PlusIcon, SearchIcon, XIcon } from '../components/icons'
-import { Missing, StatusBadge, btn, inputCls } from '../components/ui'
+import { CalendarIcon, CheckIcon, ChevronRightIcon, ClockIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, XIcon } from '../components/icons'
+import { LoadPanel, Missing, StatusBadge, btn, inputCls } from '../components/ui'
 
 type ModalState = { mode: 'new' } | { mode: 'edit'; appointment: Appointment } | null
 
 export default function AppointmentsPage() {
-  const { appointments } = useDemoStore()
+  const { appointments, appointmentsState, reloadAppointments } = useDemoStore()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [modal, setModal] = useState<ModalState>(null)
@@ -61,9 +61,20 @@ export default function AppointmentsPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">Appointments</h1>
           <p className="mt-1 text-sm text-slate-600">Manage and review scheduled dental visits.</p>
         </div>
-        <button type="button" className={btn.primary} onClick={() => setModal({ mode: 'new' })}>
-          <PlusIcon /> New appointment
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={btn.secondary}
+            onClick={reloadAppointments}
+            disabled={appointmentsState.status === 'loading'}
+            aria-label="Refresh appointments from the API"
+          >
+            <RefreshIcon className={`size-4 ${appointmentsState.status === 'loading' ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+          <button type="button" className={btn.primary} onClick={() => setModal({ mode: 'new' })}>
+            <PlusIcon /> New appointment
+          </button>
+        </div>
       </div>
 
       <section aria-label="Summary" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -139,7 +150,9 @@ export default function AppointmentsPage() {
           </span>
         </div>
 
-        {filtered.length === 0 ? (
+        {appointmentsState.status !== 'ready' ? (
+          <LoadPanel state={appointmentsState} label="appointments" onRetry={reloadAppointments} />
+        ) : filtered.length === 0 ? (
           <div className="px-6 py-16 text-center">
             <div className="mx-auto grid size-12 place-items-center rounded-full bg-slate-100 text-slate-600">
               <SearchIcon className="size-6" />
@@ -184,7 +197,7 @@ export default function AppointmentsPage() {
                 {filtered.map((a) => (
                   <tr key={a.appointmentId} onClick={() => open(a)} className="cursor-pointer hover:bg-slate-50">
                     <td className="px-5 py-3.5">
-                      <div className="font-medium text-slate-900">{a.patientName}</div>
+                      <div className="font-medium text-slate-900">{a.patientName || <Missing label="Unknown patient" />}</div>
                       <div className="text-xs text-slate-600">
                         {a.patientId} · {a.appointmentId}
                       </div>
@@ -235,7 +248,7 @@ export default function AppointmentsPage() {
                         to={`/appointments/${a.sessionId}`}
                         className="font-medium text-slate-900 after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-teal-700"
                       >
-                        {a.patientName}
+                        {a.patientName || a.patientId}
                       </Link>
                       <p className="text-xs text-slate-600">
                         {a.patientId} · {a.appointmentId}

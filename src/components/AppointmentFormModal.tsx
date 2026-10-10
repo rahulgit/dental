@@ -4,6 +4,7 @@ import type { Appointment, AppointmentStatus } from '../types'
 import { APPOINTMENT_STATUSES } from '../types'
 import { todayISO } from '../lib/format'
 import { useDemoStore } from '../store/DemoStore'
+import { newAppointmentId, newSessionId } from '../lib/ids'
 import { AlertIcon } from './icons'
 import { Field, Modal, btn, inputCls, lockedCls } from './ui'
 
@@ -27,20 +28,6 @@ type FormState = {
   type: string
   dentist: string
   status: AppointmentStatus
-}
-
-function newId(appointments: Appointment[]): string {
-  const max = appointments.reduce((m, a) => {
-    const n = Number(a.appointmentId.replace(/\D/g, ''))
-    return Number.isFinite(n) && n > m ? n : m
-  }, 1000)
-  return `APT-${max + 1}`
-}
-
-function newSessionId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`
 }
 
 /** Mount to open. With `appointment`, edits it (AP-07); otherwise creates a new one (AP-06). */
@@ -85,7 +72,7 @@ export default function AppointmentFormModal({
     ev.preventDefault()
     if (!validate()) return
     const base: Appointment = appointment ?? {
-      appointmentId: newId(appointments),
+      appointmentId: newAppointmentId(appointments),
       sessionId: newSessionId(),
       patientId: '',
       patientName: '',

@@ -1,9 +1,6 @@
-import type { Appointment, AppointmentStatus, ClinicalNote, ClinicalRecord, ProcedureEntry, ToothFinding } from '../types'
-import { APPOINTMENT_STATUSES } from '../types'
+import type { ClinicalNote, ClinicalRecord, ProcedureEntry, ToothFinding } from '../types'
 import { parseCsv } from '../lib/csv'
 import patientsCsv from './patients.csv?raw'
-import appointmentsCsv from './appointments.csv?raw'
-import consultationsCsv from './consultations.csv?raw'
 
 // --- Normalisation: tolerate missing / malformed fields (PRD AD-11) ---------
 
@@ -70,55 +67,16 @@ export function normalizeRecord(v: unknown): ClinicalRecord | null {
   }
 }
 
-// --- Seed data (CSV) ---------------------------------------------------------
+// --- Patient directory (CSV) ----------------------------------------------
 //
-// patients.csv       patientId (PK), patientName
-// appointments.csv   appointmentId (PK), sessionId, patientId (FK), date, time, type, dentist, status
-// consultations.csv  sessionId (PK), appointmentId (FK), patientId (FK), note (clinical note as JSON)
+// patients.csv   patientId (PK), patientName
 //
-// Scheduling (appointments) stays separate from the clinical record (consultations),
-// linked by sessionId / appointmentId as the PRD requires.
+// Appointments and consultations come from the API (src/lib/api.ts); the API
+// has no patient names, so they are looked up here by patientId.
 
-function patientNames(): Map<string, string> {
-  return new Map(parseCsv(patientsCsv).map((p) => [p.patientId, p.patientName]))
-}
+let names: Map<string, string> | undefined
 
-export function seedAppointments(): Appointment[] {
-  const names = patientNames()
-  return parseCsv(appointmentsCsv)
-    .filter((a) => a.appointmentId && a.sessionId)
-    .map((a) => ({
-      appointmentId: a.appointmentId,
-      sessionId: a.sessionId,
-      patientId: a.patientId,
-      patientName: names.get(a.patientId) ?? '',
-      date: a.date,
-      time: a.time,
-      type: a.type,
-      dentist: a.dentist,
-      status: (APPOINTMENT_STATUSES as readonly string[]).includes(a.status) ? (a.status as AppointmentStatus) : 'Scheduled',
-    }))
-}
-
-function parseNote(json: string): unknown {
-  try {
-    return JSON.parse(json)
-  } catch {
-    return {}
-  }
-}
-
-export function seedRecords(): Record<string, ClinicalRecord> {
-  const names = patientNames()
-  const out: Record<string, ClinicalRecord> = {}
-  for (const c of parseCsv(consultationsCsv)) {
-    const record = normalizeRecord({
-      sessionId: c.sessionId,
-      patientId: c.patientId,
-      patientName: names.get(c.patientId) ?? '',
-      note: parseNote(c.note),
-    })
-    if (record) out[record.sessionId] = record
-  }
-  return out
+export function patientName(patientId: string): string {
+  names ??= new Map(parseCsv(patientsCsv).map((p) => [p.patientId, p.patientName]))
+  return names.get(patientId) ?? ''
 }

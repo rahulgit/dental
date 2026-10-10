@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { AppointmentStatus } from '../types'
-import { XIcon } from './icons'
+import { AlertIcon, RefreshIcon, XIcon } from './icons'
 
 // Borders use slate-500 (4.7:1) so form controls meet the 3:1 non-text contrast minimum.
 export const inputCls =
@@ -44,8 +44,37 @@ export function Missing({ label = 'Not recorded' }: { label?: string }) {
   return <span className="italic text-slate-600">{label}</span>
 }
 
+/** Values like "Not provided" are recorded text, but carry no clinical content. */
+export const isPlaceholder = (v: string | undefined) =>
+  !v || !v.trim() || /^(not (provided|documented|recorded|specified|available)|none|n\/a|unknown|-+)\.?$/i.test(v.trim())
+
 export function TextOrMissing({ value, missing }: { value: string | undefined; missing?: string }) {
-  return value && value.trim() ? <>{value}</> : <Missing label={missing} />
+  if (!value || !value.trim()) return <Missing label={missing} />
+  // Show placeholder phrases as recorded, but muted so real findings stand out.
+  return isPlaceholder(value) ? <span className="italic text-slate-600">{value}</span> : <>{value}</>
+}
+
+/** Loading spinner or error-with-retry for data fetched from the API. */
+export function LoadPanel({ state, label, onRetry }: { state: { status: string; message?: string }; label: string; onRetry: () => void }) {
+  if (state.status === 'error') {
+    return (
+      <div role="alert" className="px-6 py-14 text-center">
+        <div className="mx-auto grid size-12 place-items-center rounded-full bg-red-50 text-red-700">
+          <AlertIcon className="size-6" />
+        </div>
+        <h3 className="mt-4 font-medium text-slate-900">Could not load {label}</h3>
+        <p className="mt-1 text-sm text-slate-600">{state.message}</p>
+        <button type="button" className={`${btn.secondary} mt-5`} onClick={onRetry}>
+          <RefreshIcon /> Try again
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div role="status" className="flex items-center justify-center gap-3 px-6 py-14 text-sm text-slate-600">
+      <RefreshIcon className="size-4 animate-spin" /> Loading {label}…
+    </div>
+  )
 }
 
 export function Field({

@@ -1,12 +1,9 @@
-import { useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { useDemoStore } from '../store/DemoStore'
 import { AlertIcon, CheckIcon, ToothIcon, XIcon } from './icons'
-import { ConfirmDialog } from './ui'
 
 export default function Layout() {
-  const { toast, dismissToast, resetDemo } = useDemoStore()
-  const [confirmReset, setConfirmReset] = useState(false)
+  const { toast, dismissToast } = useDemoStore()
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -35,8 +32,6 @@ export default function Layout() {
         <Outlet />
       </main>
 
-
-
       <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
         {toast && (
           <div
@@ -53,20 +48,6 @@ export default function Layout() {
           </div>
         )}
       </div>
-
-      {confirmReset && (
-        <ConfirmDialog
-          title="Reset demo data?"
-          message="All appointments and clinical edits will be replaced with the original demo data."
-          confirmLabel="Reset data"
-          danger
-          onCancel={() => setConfirmReset(false)}
-          onConfirm={() => {
-            resetDemo()
-            setConfirmReset(false)
-          }}
-        />
-      )}
     </div>
   )
 }
