@@ -3,6 +3,9 @@ import type { ReactNode } from 'react'
 import type { Appointment, ClinicalRecord } from '../types'
 import { patientName } from '../data/seed'
 import { fetchAppointments, fetchConsultation, saveConsultation } from '../lib/api'
+import { logger } from '../lib/debug'
+
+const log = logger('Store')
 
 type Toast = { id: number; message: string; kind: 'success' | 'error' }
 
@@ -45,6 +48,8 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
 
   const notify = useCallback((message: string, kind: Toast['kind'] = 'success') => {
     window.clearTimeout(timer.current)
+    // Error toasts are user-facing failures; keep them in the log too.
+    if (kind === 'error') log.error(`Toast: ${message}`)
     setToast({ id: Date.now(), message, kind })
     timer.current = window.setTimeout(() => setToast(null), kind === 'error' ? 6000 : 3000)
   }, [])
@@ -57,10 +62,16 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
     setAppointmentsState({ status: 'loading' })
     fetchAppointments()
       .then((list) => {
-        setRemote(list.map((a) => ({ ...a, patientName: patientName(a.patientId) })))
+        const named = list.map((a) => ({ ...a, patientName: patientName(a.patientId) }))
+        const unnamed = [...new Set(named.filter((a) => !a.patientName).map((a) => a.patientId))]
+        if (unnamed.length) log.warn(`No name in patients.csv for ${unnamed.join(', ')}; showing the patient ID instead`)
+        setRemote(named)
         setAppointmentsState({ status: 'ready' })
       })
-      .catch((e) => setAppointmentsState({ status: 'error', message: errorMessage(e) }))
+      .catch((e) => {
+        log.error('Could not load appointments', e)
+        setAppointmentsState({ status: 'error', message: errorMessage(e) })
+      })
   }, [])
 
   useEffect(reloadAppointments, [reloadAppointments])
@@ -71,6 +82,7 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
   }, [remote, local])
 
   const saveAppointment = useCallback((appointment: Appointment) => {
+    log.log(`Appointment ${appointment.appointmentId} saved locally (no appointment API; lost on reload)`, appointment)
     setLocal((l) => ({ ...l, [appointment.appointmentId]: appointment }))
     return true
   }, [])
@@ -94,7 +106,10 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
       .then((note) =>
         setRecords((r) => ({ ...r, [key]: { status: 'ready', record: note ? toRecord(appointment, note) : null } })),
       )
-      .catch((e) => setRecords((r) => ({ ...r, [key]: { status: 'error', message: errorMessage(e) } })))
+      .catch((e) => {
+        log.error(`Could not load consultation for ${appointment.appointmentId}`, e)
+        setRecords((r) => ({ ...r, [key]: { status: 'error', message: errorMessage(e) } }))
+      })
   }, [])
 
   const recordsRef = useRef(records)
@@ -117,6 +132,7 @@ export function DemoStoreProvider({ children }: { children: ReactNode }) {
         setRecords((r) => ({ ...r, [record.sessionId]: { status: 'ready', record } }))
         return true
       } catch (e) {
+        log.error(`Could not save consultation for ${appointment.appointmentId}`, e)
         notify(`Could not save clinical record: ${errorMessage(e)}`, 'error')
         return false
       }

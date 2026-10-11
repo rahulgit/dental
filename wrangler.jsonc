@@ -3,6 +3,8 @@
   "name": "dentalcare-hms",
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
+  // Worker console logs in the Cloudflare dashboard (Observability → Logs); or run `npx wrangler tail`.
+  "observability": { "enabled": true },
   "assets": {
     // Refreshing /appointments/:id serves index.html; only /api/* runs the Worker.
     "not_found_handling": "single-page-application",
