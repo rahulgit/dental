@@ -40,8 +40,9 @@ for the app's origin (e.g. the `*.workers.dev` URL); if validation fails the pan
 
 | Panel → app | What the app does |
 |---|---|
-| context | The appointment page sends the patient and appointment on screen |
+| context | The appointment page shares everything it has: `patient` (id, name, dentist, all `visits`), `provider` (assigned dentist), `appointment`, and `consultation` with the **full saved clinical note** and its status (`loading` / `recorded` / `not-recorded` / `error`). Updated whenever the note is saved. Shape: `src/gooddoc/context.ts` |
+| `host.getConsultation` request | `{ appointmentId }` or `{ sessionId }` → that appointment and full consultation; `{ patientId }` → all of the patient’s, newest first |
 | `ambient.note` (clinician reviewed + saved) | Saved to that appointment's clinical record via `/api/consultation/save`. Fields the scribe filled replace the chart's; empty ones keep what's charted |
 | `appointment.requested` (Book follow-up) | Creates a recall appointment (in memory, like other appointment edits) |
-| `host.getRecentActivity` (Visit summary) | Returns the patient's appointments |
+| `host.getRecentActivity` (Visit summary) | Returns the patient's appointments, with complaint and assessment for loaded consultations |
 | navigate `/patients/:id/visits` | Opens the appointment list filtered to that patient |

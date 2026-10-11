@@ -1,7 +1,8 @@
 // GoodDoc Control Panel integration (@gooddoc/gd-plugin).
 //
 // - <GoodDocProvider> mounts the panel (floating launcher + Ctrl+G) and the bridge below.
-// - useGoodDocPatient(appointment) tells the panel which patient/appointment is on screen.
+// - useGoodDocPatient(appointment) shares the patient, appointment and full consultation on screen
+//   (see context.ts); the panel can also request any consultation with host.getConsultation.
 // - The bridge answers the panel: ambient notes are saved to the chart, follow-up requests
 //   create appointments, "visit summary" reads recent appointments, "Open visits" navigates.
 //
@@ -24,6 +25,7 @@ import { formatDate, todayISO, toISODate } from '../lib/format'
 import { newAppointmentId, newSessionId } from '../lib/ids'
 import { useDemoStore } from '../store/DemoStore'
 import { fromAmbientNote, mergeAmbientNote } from './note'
+import { buildContext, sharedConsultation } from './context'
 
 const apiKey = import.meta.env.VITE_GD_API_KEY
 export const GOODDOC_ENABLED = Boolean(apiKey)
@@ -71,7 +73,7 @@ function appointmentFor(appointments: Appointment[], patientId: string): Appoint
 }
 
 function GoodDocBridge() {
-  const { appointments, saveAppointment, getRecord, saveRecord, notify } = useDemoStore()
+  const { appointments, records, saveAppointment, getRecord, saveRecord, notify } = useDemoStore()
   // GoodDoc ambient session → the appointment that was open when recording started.
   const sessions = useRef(new Map<string, string>())
 
@@ -137,38 +139,53 @@ function GoodDocBridge() {
     notify(`GoodDoc visit summary received (${items?.length ?? 0} visit${items?.length === 1 ? '' : 's'})`),
   )
 
-  // "Prepare visit summary": the patient's visits from this app, newest first.
+  // "Prepare visit summary": the patient's visits, newest first, with each visit's
+  // complaint and assessment when its consultation has been loaded.
   usePluginRequestHandler('host.getRecentActivity', (params) => {
     const { patientId } = (params ?? {}) as { patientId?: string }
     return appointments
       .filter((a) => a.patientId === patientId)
       .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
       .slice(0, 10)
-      .map((a) => ({ title: a.type, date: formatDate(a.date), detail: `${a.status} · ${a.appointmentId}` }))
+      .map((a) => {
+        const state = records[a.sessionId]
+        const note = state?.status === 'ready' ? state.record?.note : undefined
+        const clinical = [note?.chiefComplaint, note?.assessment].filter(Boolean).join(' — ')
+        return { title: a.type, date: formatDate(a.date), detail: [`${a.status} · ${a.appointmentId}`, clinical].filter(Boolean).join(' · ') }
+      })
+  })
+
+  // Full consultation(s) on demand, in the same shape as the context's `consultation`:
+  //   { appointmentId } or { sessionId } → one; { patientId } → all of that patient's, newest first.
+  usePluginRequestHandler('host.getConsultation', async (params) => {
+    const { appointmentId, sessionId, patientId } = (params ?? {}) as { appointmentId?: string; sessionId?: string; patientId?: string }
+    const load = async (a: Appointment) => {
+      try {
+        const record = await getRecord(a)
+        return { appointment: { id: a.appointmentId, ...a }, consultation: sharedConsultation(a, { status: 'ready', record }) }
+      } catch (e) {
+        return { appointment: { id: a.appointmentId, ...a }, consultation: sharedConsultation(a, { status: 'error', message: e instanceof Error ? e.message : 'unknown error' }) }
+      }
+    }
+    if (appointmentId || sessionId) {
+      const a = appointments.find((x) => x.appointmentId === appointmentId || x.sessionId === sessionId)
+      if (!a) throw new Error(`No appointment ${appointmentId ?? sessionId}`)
+      return load(a)
+    }
+    if (patientId) {
+      const mine = appointments.filter((a) => a.patientId === patientId).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
+      return Promise.all(mine.map(load))
+    }
+    throw new Error('Pass appointmentId, sessionId or patientId')
   })
 
   return null
 }
 
 function useGoodDocPatientLive(appointment: Appointment | undefined) {
-  usePluginContext(
-    appointment
-      ? {
-          patient: {
-            id: appointment.patientId,
-            name: appointment.patientName || appointment.patientId,
-            ...(appointment.dentist ? { primaryDentist: appointment.dentist } : {}),
-          },
-          appointment: {
-            id: appointment.appointmentId,
-            type: appointment.type,
-            date: appointment.date,
-            time: appointment.time,
-            status: appointment.status,
-          },
-        }
-      : null,
-  )
+  const { appointments, records } = useDemoStore()
+  // Re-sent whenever the appointment, visit list or saved consultation changes (the SDK diffs by value).
+  usePluginContext(appointment ? buildContext(appointment, appointments, records[appointment.sessionId]) : null)
   useEffect(() => {
     activeAppointment = appointment ?? null
     return () => {
@@ -186,7 +203,7 @@ function useGoodDocLive() {
 const disabled = { enabled: false, ready: false, isOpen: false, show: () => {} }
 
 // Chosen once at load, so hook order never changes between renders.
-/** Tell the panel which patient and appointment are on screen while the calling page is mounted. */
+/** Share the on-screen patient, appointment and full consultation with the panel while the calling page is mounted. */
 export const useGoodDocPatient: (appointment: Appointment | undefined) => void = GOODDOC_ENABLED ? useGoodDocPatientLive : () => {}
 /** Panel status and controls; `enabled` is false when GoodDoc isn't configured. */
 export const useGoodDoc: () => typeof disabled = GOODDOC_ENABLED ? useGoodDocLive : () => disabled
